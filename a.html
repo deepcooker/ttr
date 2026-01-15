@@ -2007,6 +2007,54 @@ C 池归零
 
 你已经把失败
 限制在你允许的地方。
+-------------------------------------------------------------------------------
+backtest size 正确的用法，
+
+https://kernc.github.io/backtesting.py/doc/backtesting/lib.html#backtesting.lib.FractionalBacktest&gsc.tab=0    
+
+我查阅了资料【
+def next(self):
+# 直接下单0.0001 BTC（小数size，无需放大）
+self.buy(size=0.0001)
+初始化FractionalBacktest，指定最小交易单位（可选，默认适配任意小数）
+bt = FractionalBacktest(
+data=btc_hourly_data,  # BTC的K线数据
+strategy=BTCStrategy,
+cash=2000,  # 原始资金2000 USDT，无需放大
+commission=.002,
+fractional_unit=0.0001  # 可选：指定最小交易单位为0.0001 BTC
+)
+stats = bt.run()
+bt.plot()
+二、官方方案对统计指标 / 字段映射的影响
+对统计指标的影响
+FractionalBacktest 是 Backtest 的子类，仅修改「size 的取整逻辑」，不改变任何统计指标的计算规则：
+相对指标（收益率、胜率、夏普比率、最大回撤 % 等）：完全无影响，计算逻辑与原生一致；
+绝对指标（最终权益、手续费、订单 size 等）：直接输出真实值（如 0.0001 BTC 的盈亏），无需手动还原；
+交易记录（_trades）、权益曲线（_equity_curve）：原生记录小数 size 和对应盈亏，无放大 / 缩小的额外处理。
+对你提供的 field_mapping 的影响
+field_mapping 仅为「英文指标名→中文指标名」的映射关系，完全不受 FractionalBacktest 影响：
+所有 key（如Equity Final [$]、Return [%]、# Trades）均保持不变；
+映射后的中文指标名（如「最终账户权益 (USDT)」「总收益率 (%)」）对应的数值是真实的小数交易结果，无需调整。
+三、对比「资金放大倍数」vs 官方 FractionalBacktest
+维度	资金放大倍数（自制方案）	官方 FractionalBacktest
+开发成本	需封装子类、处理放大 / 缩小逻辑	直接导入使用，零开发成本
+数据准确性	需手动还原绝对指标，易出错	原生计算，无误差
+兼容性	需适配 plot、优化器等功能	完全兼容原生所有功能
+维护成本	版本更新后需重新适配	官方维护，随版本迭代
+四、补充说明
+若你的 backtesting.py 版本低于 0.6.3，需先升级：
+bash
+运行
+pip install --upgrade backtesting
+FractionalBacktest 的详细文档可参考官方 API：
+https://kernc.github.io/backtesting.py/doc/backtesting/lib.html#backtesting.lib.FractionalBacktest
+该类不仅支持加密货币（BTC/ETH）的小数交易，也支持股票、期货等任何需要小数单位下单的场景。
+总结
+backtesting.py 已通过 FractionalBacktest 原生支持小数 size 的绝对数量下单，是最优解；该方案完全兼容你提供的 field_mapping，所有统计指标均无失真，无需自行实现「资金放大倍数」的 hack 方案。】
+
+
+这是一个非常棒的发现！这直接从库的底层解决了“富人靠百分比，穷人靠整数”的尴尬，让回测系统可以精确模拟真实世界的“固
 
 
 
