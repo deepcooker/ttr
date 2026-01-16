@@ -1,4 +1,14 @@
 # htf_engine.py
+"""
+HTF Engine 时间语义说明 (Time Semantics)：
+
+1. 核心机制：所有 HTF K 线均使用 resample + shift(1) + reindex(ffill)。
+2. 业务含义：始终使用「上一根已完成的 HTF K 线」数据，绝不使用当前正在生成的 K 线。
+3. 冷启动状态：
+   - 在第一个 HTF 周期完成前（例如 4h 策略的前 4 小时），HTF OHLC / ATR / ADX 均为 NaN。
+   - 策略层必须显式等待（使用 self.min_ready_bars 或 check NaN）。
+4. 结论：这是严格“无未来函数”模型的必然行为，保证回测与实盘逻辑完全一致。
+"""
 import pandas as pd
 import numpy as np
 
