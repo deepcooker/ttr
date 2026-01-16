@@ -1,0 +1,113 @@
+# Backtesting.py 下单单位陷阱与解决方案
+
+## 1. 核心陷阱 (The Size Trap)
+
+在标准 `Backtest` 类中，`self.buy(size=X)` 的行为具有二义性：
+
+- **陷阱 A (整数)**: 若 `X >= 1` (如 `size=1`)，解释为 “买入 1 个单位 (股/币)”。
+- **陷阱 B (小数)**: 若 `0 < X < 1` (如 `size=0.5`)，解释为 “使用账户权益的 50% 仓位买入”。
+
+**后果**: 当我们试图在 BTC 价格 50,000U 时买入 0.1 BTC (5000U) 时，传入 `size=0.1`，系统会错误地理解为“全仓梭哈 10% 的本金”！导致仓位和手续费严重失真。
+
+## 2. 解决方案 (The Solution)
+
+### 方案 A：标准模式 (Standard Mode)
+
+**适用场景**: 只有当策略逻辑是基于 “仓位百分比” (如：每次用 50% 资金做多) 时使用。
+
+**类**: `backtesting.Backtest`
+
+**代码**:
+
+```python
+self.buy(size=0.5)  # 意为 50% 仓位
+```
+
+### 方案 B：小数模式 (Fractional Mode)
+
+**适用场景**: 当策略逻辑是基于 “固定数量” 或 “固定金额” (如：每次买 0.01 BTC，或每次买 1000 U) 时使用。
+
+**类**: `backtesting.lib.FractionalBacktest` (需 backtesting v0.3.3+)
+
+**代码**:
+
+```python
+from backtesting.lib import FractionalBacktest
+
+# 必须指定 fractional_unit (最小精度)
+bt = FractionalBacktest(
+    data=btc_hourly_data,
+    strategy=BTCStrategy,
+    cash=2000,  # 原始资金 2000 USDT，无需放大
+    commission=.002,
+    fractional_unit=0.0001  # 可选：指定最小交易单位为 0.0001 BTC
+)
+
+# 在策略中：
+def next(self):
+    # 直接下单 0.0001 BTC（小数 size，无需放大）
+    self.buy(size=0.0001)
+```
+
+## 3. 官方方案对统计指标 / 字段映射的影响
+
+### 对统计指标的影响
+
+`FractionalBacktest` 是 `Backtest` 的子类，仅修改「size 的取整逻辑」，不改变任何统计指标的计算规则：
+
+- **相对指标**（收益率、胜率、夏普比率、最大回撤 % 等）：完全无影响，计算逻辑与原生一致；
+- **绝对指标**（最终权益、手续费、订单 size 等）：直接输出真实值（如 0.0001 BTC 的盈亏），无需手动还原；
+- **交易记录**（`_trades`）、**权益曲线**（`_equity_curve`）：原生记录小数 size 和对应盈亏，无放大 / 缩小的额外处理。
+
+### 对你提供的 `field_mapping` 的影响
+
+`field_mapping` 仅为「英文指标名→中文指标名」的映射关系，完全不受 `FractionalBacktest` 影响：
+
+- 所有 key（如 `Equity Final [$]`、`Return [%]`、`# Trades`）均保持不变；
+- 映射后的中文指标名（如「最终账户权益 (USDT)」「总收益率 (%)」）对应的数值是真实的小数交易结果，无需调整。
+
+## 4. 对比「资金放大倍数」vs 官方 FractionalBacktest
+
+| 维度             | 资金放大倍数（自制方案）                  | 官方 FractionalBacktest          |
+|------------------|-------------------------------------------|----------------------------------|
+| 开发成本         | 需封装子类、处理放大 / 缩小逻辑           | 直接导入使用，零开发成本         |
+| 数据准确性       | 需手动还原绝对指标，易出错                | 原生计算，无误差                 |
+| 兼容性           | 需适配 plot、优化器等功能                 | 完全兼容原生所有功能             |
+| 维护成本         | 版本更新后需重新适配                      | 官方维护，随版本迭代             |
+
+## 5. 补充说明
+
+若你的 `backtesting.py` 版本低于 0.6.3，需先升级：
+
+```bash
+pip install --upgrade backtesting
+```
+
+`FractionalBacktest` 的详细文档可参考官方 API：  
+https://kernc.github.io/backtesting.py/doc/backtesting/lib.html#backtesting.lib.FractionalBacktest
+
+该类不仅支持加密货币（BTC/ETH）的小数交易，也支持股票、期货等任何需要小数单位下单的场景。
+
+## 6. 补充宝藏 (Other Goodies in backtesting.lib)
+
+- `SignalStrategy`: 适合非事件驱动的、基于向量化信号的策略（如简单的均线交叉），运行速度极快。
+- `ResampleApply`: 可以在 1分钟 K线数据上，直接计算 1小时 或 4小时 的指标，无需单独准备多份数据文件。
+- `TrailingStrategy`: 官方提供的带有移动止损功能的基类。
+
+## 7. 我们的开发协议 (Protocol)
+
+从现在开始，我们根据需求严格切换模式：
+
+- **模式一：固定金额/高频套利 (Pool A 使用)**  
+  **方法**: 使用 `FractionalBacktest`。  
+  **理由**: 我们需要精确控制每格投入 1000U 或 0.1 BTC，而不是随权益波动。
+
+- **模式二：趋势跟随/资产配置 (Pool B/C 使用)**  
+  **方法**: 使用标准 `Backtest`。  
+  **理由**: 趋势策略通常讲究“复利”，即本金多了，仓位自动加大 (如 Kelly 公式或固定比例)。
+
+## 8. 关于 V6.0 的说明
+
+既然 V6.0 我们已经使用了 `int(1)` (1 BTC) 这种“重型坦克”方式，它避开了小数陷阱（触发了 `size >= 1` 的整数逻辑），所以 V6.0 的回测结果是完全有效且真实的。它模拟了拥有大资金（100万U）只做 1 BTC 的低杠杆场景。
+
+请上传 Pool A V6.0 的结果 `result.txt`，让我们看看这台重型坦克在高频收租时的表现！我准备好进行最终验收了。
